@@ -99,6 +99,7 @@ async function run() {
       async (req, res) => {
         try {
           const user = req.body;
+          console.log(user)
           if (!user) {
             return res.status(400).json({ message: "User Info Doesn't Exist" });
           }
@@ -162,7 +163,25 @@ async function run() {
               })
               .catch((error) => {
                 console.log("Error creating new user:", error);
-                res.status(500).json({ message: "Failed to save user" });
+                switch (error.code) {
+                  case "auth/email-already-in-use":
+                    res.status(500).json({
+                      message: "User already exists in the database.",
+                    });
+                    break;
+                  case "auth/weak-password":
+                    res.status(500).json({
+                      message: "At least 6 ta digit password required",
+                    });
+                    break;
+                  case "auth/invalid-email":
+                    res.status(500).json({
+                      message: "Invalid email format. Please check your email.",
+                    });
+                    break;
+                  default:
+                    res.status(500).json({ message: "Failed to save user" });
+                }
               });
           }
         } catch (err) {
@@ -171,6 +190,66 @@ async function run() {
         }
       },
     );
+    app.post("/login", async (req, res) => {
+      try {
+        const user = req.body;
+        if (!user) {
+          return res.status(400).json({ message: "User Info Doesn't Exist" });
+        }
+        if (!user.password) {
+          return res.status(400).json({ message: "Password required" });
+        }
+        if (!user.email) {
+          return res.status(400).json({ message: "Email required" });
+        }
+
+        const query = { email: user.email };
+        const existingUser = await userCollection.findOne(query);
+        if (!existingUser) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const isMatch = await bcrypt.compare(
+          user.password,
+          existingUser.password,
+        );
+        if (!isMatch) {
+          return res.status(401).json({ message: "Incorrect password" });
+        }
+
+        if (existingUser) {
+          auth
+            .getUser(existingUser.firebaseUID)
+            .then(async (userRecord) => {
+              const firebaseToken = await auth.createCustomToken(
+                userRecord.uid,
+              );
+              res.cookie("firebaseToken", firebaseToken, cookieOption);
+              res.status(200).json({
+                message: "Login successful",
+                firebaseToken,
+                user: {
+                  id: existingUser._id,
+                  name: existingUser.name,
+                  email: existingUser.email,
+                  photo: existingUser.photo,
+                  role: existingUser.role,
+                },
+              });
+              console.log(
+                `Successfully fetched user data: ${userRecord.toJSON()}`,
+              );
+            })
+            .catch((error) => {
+              console.log("Error fetching user data:", error);
+              res.status(500).json({ message: "Internal Server Error" });
+            });
+        }
+      } catch (err) {
+        console.log(err);
+        res.status(500).json({ message: "Internal Server Error" });
+      }
+    });
   } finally {
     // Ensures that the client will close when you finish/error
     //await client.close();
