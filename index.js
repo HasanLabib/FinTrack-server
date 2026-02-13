@@ -1,5 +1,4 @@
 require("dotenv").config();
-import { Query } from "./node_modules/firebase-admin/lib/esm/firestore/index";
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
@@ -342,7 +341,7 @@ async function run() {
       },
     );
     app.get("/category", verifyFBToken, verifyAdmin, async (req, res) => {
-      const page= parseInt(req.query.page) || 1
+      const page = parseInt(req.query.page) || 1;
       const limit = 8;
       const skip = (page - 1) * limit;
       const category = await categoryCollection
