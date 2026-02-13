@@ -99,7 +99,7 @@ async function run() {
       async (req, res) => {
         try {
           const user = req.body;
-          console.log(user)
+          console.log(user);
           if (!user) {
             return res.status(400).json({ message: "User Info Doesn't Exist" });
           }
@@ -249,6 +249,22 @@ async function run() {
         console.log(err);
         res.status(500).json({ message: "Internal Server Error" });
       }
+    });
+    app.post("/logout", (req, res) => {
+      res.clearCookie("firebaseToken", { path: "/" });
+      res.status(200).json({ message: "Logged out successfully" });
+    });
+
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const user = await userCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.status(200).json(user);
     });
   } finally {
     // Ensures that the client will close when you finish/error
