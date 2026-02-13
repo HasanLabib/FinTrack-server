@@ -113,6 +113,7 @@ async function run() {
     const finTrackDB = client.db("FinTrackDB");
     const userCollection = finTrackDB.collection("user");
     const categoryCollection = finTrackDB.collection("category");
+    const incomeCollection = finTrackDB.collection("incomeCollection");
     const verifyAdmin = async (req, res, next) => {
       try {
         const email = req.decoded_email;
@@ -375,6 +376,82 @@ async function run() {
       },
     );
     //--------Admin Dashboard Api End--------------
+
+    app.post("/income", verifyFBToken, async (req, res) => {
+      try {
+        const income = {
+          ...req.body,
+          createdByEmail: req.decoded_email,
+          createdAt: new Date(),
+        };
+        const result = await incomeCollection.insertOne(income);
+        res.status(201).send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create income entry" });
+      }
+    });
+
+    app.put("/update-income/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updateIncome = req.body;
+        delete updateIncome.createdByEmail;
+
+        const query = { _id: new ObjectId(id) };
+        const result = await incomeCollection.updateOne(query, {
+          $set: updateIncome,
+        });
+
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update income entry" });
+      }
+    });
+
+    app.get("/income", verifyFBToken, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = 8;
+        const skip = (page - 1) * limit;
+
+        const income = await incomeCollection
+          .find({ createdByEmail: req.decoded_email })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const totalIncome = await incomeCollection.countDocuments({
+          createdByEmail: req.decoded_email,
+        });
+
+        res.send({
+          income,
+          totalIncome,
+          currentPage: page,
+          totalPages: Math.ceil(totalIncome / limit),
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch income entries" });
+      }
+    });
+
+    app.delete("/delete-income/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await incomeCollection.deleteOne(query);
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to delete income entry" });
+      }
+    });
+
+    //--------------USER Income Api End-----------------
   } finally {
     // Ensures that the client will close when you finish/error
     //await client.close();
