@@ -87,13 +87,13 @@ const cookieOption = {
 
 const verifyFBToken = async (req, res, next) => {
   const idToken = req.headers.authorization;
-  if (!idToken) {
+  if (!idToken?.startsWith("Bearer ")) {
     return res.status(401).send({ message: "unauthorized access" });
   }
   try {
     console.log(idToken.split(" "));
     const token = idToken.split(" ")[1];
-    const decoded = auth.verifyIdToken(token);
+    const decoded = await auth.verifyIdToken(token);
     req.decoded_email = decoded.email;
     next();
   } catch (err) {
@@ -102,7 +102,7 @@ const verifyFBToken = async (req, res, next) => {
 };
 const verifyAdmin = async (req, res, next) => {
   try {
-    const email = req.email;
+    const email = req.decoded_email;
     const query = { email };
     const findUser = await userCollection.findOne(query);
     if (findUser.role !== "admin") {
@@ -126,6 +126,7 @@ async function run() {
     //await client.db("admin").command({ ping: 1 });
     const finTrackDB = client.db("FinTrackDB");
     const userCollection = finTrackDB.collection("user");
+    const categoryCollection = finTrackDB.collection("category");
 
     app.post(
       "/register",
@@ -303,7 +304,78 @@ async function run() {
 
     //--------Admin Dashboard Api Start------------
 
-    app.post("/category", verifyFBToken, (req, res) => {});
+    app.post("/category", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const category = {
+          ...req.body,
+          createdByEmail: req.decoded_email,
+          createdAt: new Date(),
+        };
+        const result = await categoryCollection.insertOne(category);
+        res.status(201).send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create category" });
+      }
+    });
+
+    app.put(
+      "/update-category/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const updateCategory = req.body;
+          delete updateCategory.createdByEmail;
+
+          const query = { _id: new ObjectId(id) };
+
+          const result = await categoryCollection.updateOne(query, {
+            $set: updateCategory,
+          });
+          res.status(200).json(result);
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ error: "Failed to update category" });
+        }
+      },
+    );
+    app.get("/category", verifyFBToken, verifyAdmin, async (req, res) => {
+      const page= parseInt(req.query.page) || 1
+      const limit = 8;
+      const skip = (page - 1) * limit;
+      const category = await categoryCollection
+        .find({})
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+      const totalCategory = await categoryCollection.countDocuments({});
+      res.send({
+        category,
+        totalCategory,
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCategory / limit),
+      });
+    });
+
+    app.delete(
+      "/delete-category/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        try {
+          const result = await categoryCollection.deleteOne(query);
+          res.status(200).json(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ message: "Failed to delete category" });
+        }
+      },
+    );
     //--------Admin Dashboard Api End--------------
   } finally {
     // Ensures that the client will close when you finish/error
