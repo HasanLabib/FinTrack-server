@@ -90,7 +90,7 @@ const verifyFBToken = async (req, res, next) => {
     return res.status(401).send({ message: "unauthorized access" });
   }
   try {
-    console.log(idToken.split(" "));
+    //console.log(idToken.split(" "));
     const token = idToken.split(" ")[1];
     const decoded = await auth.verifyIdToken(token);
     req.decoded_email = decoded.email;
@@ -114,6 +114,9 @@ async function run() {
     const userCollection = finTrackDB.collection("user");
     const categoryCollection = finTrackDB.collection("category");
     const incomeCollection = finTrackDB.collection("incomeCollection");
+    const transactionCollection = finTrackDB.collection(
+      "transactionCollection",
+    );
     const verifyAdmin = async (req, res, next) => {
       try {
         const email = req.decoded_email;
@@ -358,18 +361,6 @@ async function run() {
         totalPages: Math.ceil(totalCategory / limit),
       });
     });
-    app.get("/all-category", verifyFBToken, async (req, res) => {
-      try {
-        const categories = await categoryCollection
-          .find({})
-          .sort({ category: 1 })
-          .toArray();
-
-        res.status(200).send(categories);
-      } catch (err) {
-        res.status(500).send({ error: "Failed to fetch categories" });
-      }
-    });
 
     app.delete(
       "/delete-category/:id",
@@ -403,6 +394,18 @@ async function run() {
         res.status(500).send({ error: "Failed to create income entry" });
       }
     });
+    app.get("/all-category", verifyFBToken, async (req, res) => {
+      try {
+        const categories = await categoryCollection
+          .find({})
+          .sort({ category: 1 })
+          .toArray();
+
+        res.status(200).send(categories);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to fetch categories" });
+      }
+    });
 
     app.put("/update-income/:id", verifyFBToken, async (req, res) => {
       try {
@@ -420,6 +423,15 @@ async function run() {
         console.error(err);
         res.status(500).send({ error: "Failed to update income entry" });
       }
+    });
+    app.patch("/patch-amount", verifyFBToken, async (req, res) => {
+      const data = req.body;
+      console.log(data);
+      const { createdByEmail, id } = req.body;
+      const query = { createdByEmail, _id: new ObjectId(id) };
+      const result = await incomeCollection.updateOne(query, { $set: data });
+      console.log(result);
+      res.send(result);
     });
 
     app.get("/income", verifyFBToken, async (req, res) => {
@@ -460,6 +472,24 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to delete income entry" });
+      }
+    });
+
+    app.post("/transaction", verifyFBToken, async (req, res) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+
+      if (user) {
+        delete user.email;
+        delete user.password;
+        const transaction = {
+          ...req.body,
+          ...user,
+          createdByEmail: email,
+          createdAt: new Date(),
+        };
+        await transactionCollection.insertOne(transaction);
       }
     });
 
