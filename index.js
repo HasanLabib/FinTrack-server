@@ -99,19 +99,6 @@ const verifyFBToken = async (req, res, next) => {
     return res.status(401).send({ message: "unauthorized access" });
   }
 };
-const verifyAdmin = async (req, res, next) => {
-  try {
-    const email = req.decoded_email;
-    const query = { email };
-    const findUser = await userCollection.findOne(query);
-    if (findUser.role !== "admin") {
-      return res.status(403).send({ message: "Admin only" });
-    }
-    next();
-  } catch (err) {
-    console.log(err);
-  }
-};
 
 app.get("/", (req, res) => {
   res.send("Fintrack server is running");
@@ -126,7 +113,19 @@ async function run() {
     const finTrackDB = client.db("FinTrackDB");
     const userCollection = finTrackDB.collection("user");
     const categoryCollection = finTrackDB.collection("category");
-
+    const verifyAdmin = async (req, res, next) => {
+      try {
+        const email = req.decoded_email;
+        const query = { email };
+        const findUser = await userCollection.findOne(query);
+        if (findUser.role !== "admin") {
+          return res.status(403).send({ message: "Admin only" });
+        }
+        next();
+      } catch (err) {
+        console.log(err);
+      }
+    };
     app.post(
       "/register",
       uploadProfile.single("profile_photo"),
