@@ -358,6 +358,18 @@ async function run() {
         totalPages: Math.ceil(totalCategory / limit),
       });
     });
+    app.get("/all-category", verifyFBToken, async (req, res) => {
+      try {
+        const categories = await categoryCollection
+          .find({})
+          .sort({ category: 1 })
+          .toArray();
+
+        res.status(200).send(categories);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to fetch categories" });
+      }
+    });
 
     app.delete(
       "/delete-category/:id",
