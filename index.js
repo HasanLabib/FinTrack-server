@@ -1,4 +1,5 @@
 require("dotenv").config();
+import { Query } from "./node_modules/firebase-admin/lib/esm/firestore/index";
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
@@ -83,6 +84,39 @@ const cookieOption = {
   sameSite: "lax",
   maxAge: 2592000,
 };
+
+const verifyFBToken = async (req, res, next) => {
+  const idToken = req.headers.authorization;
+  if (!idToken) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  try {
+    console.log(idToken.split(" "));
+    const token = idToken.split(" ")[1];
+    const decoded = auth.verifyIdToken(token);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (err) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+};
+const verifyAdmin = async (req, res, next) => {
+  try {
+    const email = req.email;
+    const query = { email };
+    const findUser = await userCollection.findOne(query);
+    if (findUser.role !== "admin") {
+      return res.status(403).send({ message: "Admin only" });
+    }
+    next();
+  } catch (err) {
+    console.log(err);
+  }
+};
+
+app.get("/", (req, res) => {
+  res.send("Fintrack server is running");
+});
 
 async function run() {
   try {
@@ -266,6 +300,11 @@ async function run() {
 
       res.status(200).json(user);
     });
+
+    //--------Admin Dashboard Api Start------------
+
+    app.post("/category", verifyFBToken, (req, res) => {});
+    //--------Admin Dashboard Api End--------------
   } finally {
     // Ensures that the client will close when you finish/error
     //await client.close();
