@@ -77,6 +77,7 @@ const photoStorage = new CloudinaryStorage({
 });
 
 const uploadProfile = multer({ storage: photoStorage });
+const upload = multer();
 const cookieOption = {
   httpOnly: true,
   secure: false,
@@ -117,6 +118,8 @@ async function run() {
     const transactionCollection = finTrackDB.collection(
       "transactionCollection",
     );
+    const savingCollection = finTrackDB.collection("savingCollection");
+    const expenseCollection = finTrackDB.collection("expenseCollection");
     const verifyAdmin = async (req, res, next) => {
       try {
         const email = req.decoded_email;
@@ -378,7 +381,36 @@ async function run() {
         }
       },
     );
+
+    app.get("/all-transaction", verifyFBToken, async (req, res) => {
+      const page = parseInt(req.query.page) || 1;
+      const limit = 8;
+      const skip = (page - 1) * limit;
+      try {
+        const transaction = await transactionCollection
+          .find({})
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+        const totalTran = await transactionCollection.countDocuments({});
+
+        res.status(200).send({
+          transaction,
+          totalTran,
+          currentPage: page,
+          totalPages: Math.ceil(totalTran / limit),
+        });
+      } catch (err) {
+        console.log(err);
+        res.status(500).send({ error: "Failed to fetch Transaction entries" });
+      }
+    });
     //--------Admin Dashboard Api End--------------
+
+    //--------------User Api-------------------
+
+    //--------------Income  Api------------------
 
     app.post("/income", verifyFBToken, async (req, res) => {
       try {
@@ -425,11 +457,12 @@ async function run() {
       }
     });
     app.patch("/patch-amount", verifyFBToken, async (req, res) => {
-      const data = req.body;
-      console.log(data);
-      const { createdByEmail, id } = req.body;
+      const createdByEmail = req.decoded_email;
+      const { id, amount, updatedAt } = req.body;
       const query = { createdByEmail, _id: new ObjectId(id) };
-      const result = await incomeCollection.updateOne(query, { $set: data });
+      const result = await incomeCollection.updateOne(query, {
+        $set: { amount, updatedAt },
+      });
       console.log(result);
       res.send(result);
     });
@@ -447,13 +480,26 @@ async function run() {
           .limit(limit)
           .toArray();
 
-        const totalIncome = await incomeCollection.countDocuments({
+        const totalIncomeSource = await incomeCollection.countDocuments({
           createdByEmail: req.decoded_email,
         });
+        const totalIncomeCalculate = await incomeCollection.aggregate([
+          {
+            $match: {
+              createdByEmail: req.decoded_email,
+            },
+            $group: {
+              _id: null,
+              total: { $sum: `$amount` },
+            },
+          },
+        ]);
+        const totalIncome = totalIncomeCalculate[0]?.total || 0;
 
         res.send({
           income,
           totalIncome,
+          totalIncomeSource,
           currentPage: page,
           totalPages: Math.ceil(totalIncome / limit),
         });
@@ -475,21 +521,376 @@ async function run() {
       }
     });
 
+    //-------------Transaction Api-------------------
+
     app.post("/transaction", verifyFBToken, async (req, res) => {
       const email = req.decoded_email;
       const query = { email };
       const user = await userCollection.findOne(query);
 
       if (user) {
+        delete user._id;
         delete user.email;
         delete user.password;
+        const body = { ...req.body };
+        if (body._id) delete body._id;
         const transaction = {
-          ...req.body,
+          ...body,
           ...user,
           createdByEmail: email,
           createdAt: new Date(),
         };
-        await transactionCollection.insertOne(transaction);
+        try {
+          const result = await transactionCollection.insertOne(transaction);
+          res.status(201).json({
+            message: "Transaction created successfully",
+            insertedId: result.insertedId,
+          });
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({ message: "Failed to create transaction" });
+        }
+      } else {
+        res.status(404).json({ message: "User not found" });
+      }
+    });
+
+    app.get("/transaction", verifyFBToken, async (req, res) => {
+      const page = parseInt(req.query.page) || 1;
+      const limit = 8;
+      const skip = (page - 1) * limit;
+      const {
+        search = "",
+        category = "",
+        type = "",
+        sortField = "createdAt",
+        sortOrder = "desc",
+      } = req.query;
+
+      const filter = { createdByEmail: req.decoded_email };
+
+      if (search) {
+        filter.$or = [
+          { source: { $regex: search, $options: "i" } },
+          { note: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      if (category) filter.category = category;
+      if (type) filter.type = type;
+
+      const sort = {};
+      sort[sortField] = sortOrder === "asc" ? 1 : -1;
+
+      try {
+        const transactions = await transactionCollection
+          .find(filter)
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const totalTran = await transactionCollection.countDocuments(filter);
+
+        res.status(200).send({
+          transactions,
+          totalTran,
+          currentPage: page,
+          totalPages: Math.ceil(totalTran / limit),
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch Transaction entries" });
+      }
+    });
+
+    app.put("/update-transaction/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const email = req.decoded_email;
+        const updateTransaction = { ...req.body };
+        console.log(updateTransaction);
+        delete updateTransaction.createdByEmail;
+
+        const query = { _id: new ObjectId(id), createdByEmail: email };
+        const result = await transactionCollection.updateOne(query, {
+          $set: updateTransaction,
+        });
+        const updatedTransaction = await transactionCollection.findOne(query);
+        res.status(200).json(updatedTransaction);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update Transaction entry" });
+      }
+    });
+
+    app.delete("/delete-transaction/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const email = req.decoded_email;
+        const query = { _id: new ObjectId(id), createdByEmail: email };
+        const result = await transactionCollection.deleteOne(query);
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to delete transaction entry" });
+      }
+    });
+    //--------------Expense Api-------------
+    app.post("/expense", verifyFBToken, async (req, res) => {
+      try {
+        const expense = {
+          ...req.body,
+          createdByEmail: req.decoded_email,
+          createdAt: new Date(),
+        };
+        const result = await expenseCollection.insertOne(expense);
+        res.status(201).send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create expense entry" });
+      }
+    });
+
+    app.put("/update-expense/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updateExpense = req.body;
+        delete updateExpense.createdByEmail; // Prevent overwriting ownership
+
+        const query = { _id: new ObjectId(id) };
+        const result = await expenseCollection.updateOne(query, {
+          $set: updateExpense,
+        });
+
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update expense entry" });
+      }
+    });
+
+    app.patch("/patch-expense-amount", verifyFBToken, async (req, res) => {
+      try {
+        const createdByEmail = req.decoded_email;
+        const { id, amount, updatedAt } = req.body;
+
+        const query = { createdByEmail, _id: new ObjectId(id) };
+        const result = await expenseCollection.updateOne(query, {
+          $set: { amount, updatedAt },
+        });
+
+        console.log(result);
+        res.send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update expense amount" });
+      }
+    });
+
+    app.get("/expense", verifyFBToken, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = 8;
+        const skip = (page - 1) * limit;
+
+        const expenses = await expenseCollection
+          .find({ createdByEmail: req.decoded_email })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const totalExpensesSource = await expenseCollection.countDocuments({
+          createdByEmail: req.decoded_email,
+        });
+
+        const totalExpensesCalulate = await expenseCollection.aggregate([
+          {
+            $match: {
+              createdByEmail: req.decoded_email,
+            },
+            $group: {
+              _id: null,
+              total: { $sum: `$amount` },
+            },
+          },
+        ]);
+        const totalExpenses = totalExpensesCalulate[0]?.total || 0;
+
+        res.send({
+          expenses,
+          totalExpenses,
+          totalExpensesSource,
+          currentPage: page,
+          totalPages: Math.ceil(totalExpenses / limit),
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch expense entries" });
+      }
+    });
+
+    app.delete("/delete-expense/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await expenseCollection.deleteOne(query);
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to delete expense entry" });
+      }
+    });
+
+    //-------Savings Api--------
+    app.post("/saving", verifyFBToken, async (req, res) => {
+      try {
+        const saving = {
+          ...req.body,
+          createdByEmail: req.decoded_email,
+          createdAt: new Date(),
+        };
+        const result = await savingCollection.insertOne(saving);
+        res.status(201).send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create income entry" });
+      }
+    });
+    app.get("/saving", verifyFBToken, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = 8;
+        const skip = (page - 1) * limit;
+
+        const savings = await savingCollection
+          .find({ createdByEmail: req.decoded_email })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const totalSavingsSource = await savingCollection.countDocuments({
+          createdByEmail: req.decoded_email,
+        });
+
+        const totalSavingsCalulate = await savingCollection.aggregate([
+          {
+            $match: {
+              createdByEmail: req.decoded_email,
+            },
+            $group: {
+              _id: null,
+              total: { $sum: `$amount` },
+            },
+          },
+        ]);
+        const totalSavings = totalSavingsCalulate[0]?.total || 0;
+
+        res.send({
+          savings,
+          totalSavings,
+          totalSavingsSource,
+          currentPage: page,
+          totalPages: Math.ceil(totalSavings / limit),
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch savings entries" });
+      }
+    });
+    app.put("/update-saving/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updateSaving = req.body;
+        delete updateSaving.createdByEmail; // Prevent overwriting ownership
+
+        const query = { _id: new ObjectId(id) };
+        const result = await savingsCollection.updateOne(query, {
+          $set: updateSaving,
+        });
+
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update savings entry" });
+      }
+    });
+
+    app.patch("/patch-saving-amount", verifyFBToken, async (req, res) => {
+      const createdByEmail = req.decoded_email;
+      const { id, amount, updatedAt } = req.body;
+
+      const query = { createdByEmail, _id: new ObjectId(id) };
+      const result = await savingsCollection.updateOne(query, {
+        $set: { amount, updatedAt },
+      });
+
+      console.log(result);
+      res.send(result);
+    });
+    app.delete("/delete-saving/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await savingsCollection.deleteOne(query);
+        res.status(200).json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to delete savings entry" });
+      }
+    });
+    app.get("/savings-track/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const filterYear = req.query.year || new Date().getFullYear();
+      try {
+        const currentPogress = await transactionCollection
+          .aggregate([
+            {
+              $match: {
+                targetId: id,
+                type: "Savings",
+                date: {
+                  $gte: `${filterYear}-01-01`,
+                  $lte: `${filterYear}-12-31`,
+                },
+              },
+            },
+            {
+              $group: {
+                _id: { $month: { $toDate: `$date` } },
+                monthlyContribution: { $sum: `$amount` },
+              },
+            },
+            {
+              $sort: { _id: 1 },
+            },
+          ])
+          .toArray();
+
+        const monthNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+        const formattedCurrentProgress = currentPogress.map((item) => ({
+          monthId: item._id,
+          month: monthNames[item._id - 1],
+          amount: item.monthlyTotal,
+        }));
+        res.status(200).send(formattedCurrentProgress);
+      } catch (error) {
+        res.status(500).send(error);
       }
     });
 
