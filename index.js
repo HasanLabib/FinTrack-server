@@ -509,9 +509,25 @@ async function run() {
       async (req, res) => {
         const selectedYear =
           parseInt(req.query.year) || new Date().getFullYear();
-
         try {
-          const yearlyTransactions = await transactionCollection
+          
+          const yearlyIncomes = await incomeCollection
+            .find({
+              date: {
+                $gte: new Date(`${selectedYear}-01-01`),
+                $lte: new Date(`${selectedYear}-12-31`),
+              },
+            })
+            .toArray();
+          const yearlyExpenses = await expenseCollection
+            .find({
+              date: {
+                $gte: new Date(`${selectedYear}-01-01`),
+                $lte: new Date(`${selectedYear}-12-31`),
+              },
+            })
+            .toArray();
+          const yearlySavings = await savingCollection
             .find({
               date: {
                 $gte: new Date(`${selectedYear}-01-01`),
@@ -520,14 +536,28 @@ async function run() {
             })
             .toArray();
 
+          
+          const yearlyTransactions = [
+            ...yearlyIncomes.map((item) => ({
+              ...item,
+              type: item.type || "Income",
+            })),
+            ...yearlyExpenses.map((item) => ({
+              ...item,
+              type: item.type || "Expense",
+            })),
+            ...yearlySavings.map((item) => ({
+              ...item,
+              type: item.type || "Savings",
+            })),
+          ];
+
           const monthlyIncome = Array(12).fill(0);
           const monthlyExpense = Array(12).fill(0);
           const monthlySavings = Array(12).fill(0);
           const categoryTotals = {};
-
           yearlyTransactions.forEach((transaction) => {
             const monthIndex = new Date(transaction.date).getMonth();
-
             if (transaction.type === "Income") {
               monthlyIncome[monthIndex] += parseFloat(transaction.amount || 0);
             }
@@ -542,6 +572,7 @@ async function run() {
               monthlySavings[monthIndex] += parseFloat(transaction.amount || 0);
             }
           });
+
           const monthlyBalanceTrend = Array(12).fill(0);
           let runningBalance = 0;
           for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
@@ -561,14 +592,11 @@ async function run() {
 
           const buildMonthlySourceData = (transactions, transactionType) => {
             const sourceMap = {};
-
             transactions.forEach((transaction) => {
               if (transaction.type !== transactionType) return;
-
               const monthIndex = new Date(transaction.date).getMonth();
               const sourceName =
                 transaction.source || `General ${transactionType}`;
-
               if (!sourceMap[sourceName]) {
                 sourceMap[sourceName] = Array(12).fill(0);
               }
@@ -576,7 +604,6 @@ async function run() {
                 transaction.amount || 0,
               );
             });
-
             return {
               labels: MONTH_NAMES,
               datasets: Object.keys(sourceMap).map((sourceName) => ({
@@ -598,6 +625,7 @@ async function run() {
             yearlyTransactions,
             "Savings",
           );
+
           const totalIncome = monthlyIncome.reduce(
             (sum, amount) => sum + amount,
             0,
@@ -615,7 +643,6 @@ async function run() {
             : 0;
 
           let platformInsights = [];
-
           if (yearlyTransactions.length < 20) {
             platformInsights = [
               "Limited transaction data across the platform this year.",
@@ -625,8 +652,8 @@ async function run() {
           } else {
             const mostSpentCategory = Object.keys(categoryTotals).reduce(
               (a, b) => (categoryTotals[a] > categoryTotals[b] ? a : b),
+              "Uncategorized",
             );
-
             platformInsights = [
               savingsRate >= 20
                 ? `Platform-wide savings rate is strong at ${savingsRate}%.`
@@ -720,7 +747,7 @@ async function run() {
             },
             insights: platformInsights,
             totalUsers: await userCollection.countDocuments({}),
-            totalTransactions: yearlyTransactions.length,
+            totalTransactions: yearlyTransactions.length, 
           });
         } catch (err) {
           console.error("Admin Analytics Error:", err);
