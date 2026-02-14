@@ -636,6 +636,73 @@ async function run() {
         res.status(500).json({ message: "Failed to delete transaction entry" });
       }
     });
+
+    app.get("/income-track", verifyFBToken, async (req, res) => {
+      const filterYear = req.query.year || new Date().getFullYear();
+
+      try {
+        const incomeStateTrack = await transactionCollection
+          .aggregate([
+            {
+              $match: {
+                createdByEmail: req.decoded_email,
+                type: "Income",
+                date: {
+                  $gte: `${filterYear}-01-01`,
+                  $lte: `${filterYear}-12-31`,
+                },
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  month: { $month: { $toDate: "$date" } },
+                  source: "$source",
+                },
+                sourceAmount: { $sum: "$amount" },
+              },
+            },
+            { $sort: { "_id.month": 1 } },
+          ])
+          .toArray();
+        const monthNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+
+        const monthlyIncomeData = {};
+
+        incomeStateTrack.forEach((item) => {
+          const monthId = item._id.month;
+          if (!monthlyIncomeData[monthId]) {
+            monthlyIncomeData[monthId] = {
+              monthId: monthId,
+              month: monthNames[monthId - 1],
+              totalMonthlyIncome: 0,
+              sources: [],
+            };
+          }
+          monthlyIncomeData[monthId].totalMonthlyIncome += item.sourceAmount;
+          monthlyIncomeData[monthId].sources.push({
+            sourceName: item._id.source,
+            amount: item.sourceAmount,
+          });
+        });
+        res.status(200).send(Object.values(monthlyIncomeData));
+      } catch (err) {
+        res.status(500).send({ message: "Failed to track Income" });
+      }
+    });
     //--------------Expense Api-------------
     app.post("/expense", verifyFBToken, async (req, res) => {
       try {
@@ -740,6 +807,76 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to delete expense entry" });
+      }
+    });
+
+    app.get("/expense-track", verifyFBToken, async (req, res) => {
+      const filterYear = req.query.year || new Date().getFullYear();
+      const email = req.decoded_email;
+
+      try {
+        const expenseTrack = await transactionCollection
+          .aggregate([
+            {
+              $match: {
+                createdByEmail: email,
+                type: "Expense",
+                date: {
+                  $gte: `${filterYear}-01-01`,
+                  $lte: `${filterYear}-12-31`,
+                },
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  month: { $month: { $toDate: "$date" } },
+                  source: "$source",
+                },
+                sourceAmount: { $sum: "$amount" },
+              },
+            },
+            { $sort: { "_id.month": 1 } },
+          ])
+          .toArray();
+
+        const monthNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+
+        const monthlyExpenseData = {};
+
+        expenseTrack.forEach((item) => {
+          const monthId = item._id.month;
+          if (!monthlyExpenseData[monthId]) {
+            monthlyExpenseData[monthId] = {
+              monthId: monthId,
+              month: monthNames[monthId - 1],
+              totalMonthlyExpense: 0,
+              sources: [],
+            };
+          }
+          monthlyExpenseData[monthId].totalMonthlyExpense += item.sourceAmount;
+          monthlyExpenseData[monthId].sources.push({
+            sourceName: item._id.source,
+            amount: item.sourceAmount,
+          });
+        });
+
+        res.status(200).send(Object.values(monthlyExpenseData));
+      } catch (err) {
+        res.status(500).send({ message: "Failed to track expenses" });
       }
     });
 
