@@ -11,7 +11,7 @@ const port = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: "https://fin-track-client-xi.vercel.app",
+    origin: "http://fin-track-client-xi.vercel.app",
     credentials: true,
   }),
 );
@@ -502,261 +502,6 @@ async function run() {
       "#9966FF",
     ];
 
-    app.get(
-      "/admin/analytics",
-      verifyFBToken,
-      verifyAdmin,
-      async (req, res) => {
-        const selectedYear =
-          parseInt(req.query.year) || new Date().getFullYear();
-        try {
-          
-          const yearlyIncomes = await incomeCollection
-            .find({
-              date: {
-                $gte: new Date(`${selectedYear}-01-01`),
-                $lte: new Date(`${selectedYear}-12-31`),
-              },
-            })
-            .toArray();
-          const yearlyExpenses = await expenseCollection
-            .find({
-              date: {
-                $gte: new Date(`${selectedYear}-01-01`),
-                $lte: new Date(`${selectedYear}-12-31`),
-              },
-            })
-            .toArray();
-          const yearlySavings = await savingCollection
-            .find({
-              date: {
-                $gte: new Date(`${selectedYear}-01-01`),
-                $lte: new Date(`${selectedYear}-12-31`),
-              },
-            })
-            .toArray();
-
-          
-          const yearlyTransactions = [
-            ...yearlyIncomes.map((item) => ({
-              ...item,
-              type: item.type || "Income",
-            })),
-            ...yearlyExpenses.map((item) => ({
-              ...item,
-              type: item.type || "Expense",
-            })),
-            ...yearlySavings.map((item) => ({
-              ...item,
-              type: item.type || "Savings",
-            })),
-          ];
-
-          const monthlyIncome = Array(12).fill(0);
-          const monthlyExpense = Array(12).fill(0);
-          const monthlySavings = Array(12).fill(0);
-          const categoryTotals = {};
-          yearlyTransactions.forEach((transaction) => {
-            const monthIndex = new Date(transaction.date).getMonth();
-            if (transaction.type === "Income") {
-              monthlyIncome[monthIndex] += parseFloat(transaction.amount || 0);
-            }
-            if (transaction.type === "Expense") {
-              monthlyExpense[monthIndex] += parseFloat(transaction.amount || 0);
-              const category = transaction.category || "Uncategorized";
-              categoryTotals[category] =
-                (categoryTotals[category] || 0) +
-                parseFloat(transaction.amount || 0);
-            }
-            if (transaction.type === "Savings") {
-              monthlySavings[monthIndex] += parseFloat(transaction.amount || 0);
-            }
-          });
-
-          const monthlyBalanceTrend = Array(12).fill(0);
-          let runningBalance = 0;
-          for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
-            runningBalance +=
-              monthlyIncome[monthIndex] - monthlyExpense[monthIndex];
-            monthlyBalanceTrend[monthIndex] = runningBalance;
-          }
-
-          const monthlyIncomeExpenseRatio = monthlyIncome.map(
-            (incomeAmount, monthIndex) => {
-              const expenseAmount = monthlyExpense[monthIndex];
-              return expenseAmount > 0
-                ? (incomeAmount / expenseAmount).toFixed(2)
-                : 0;
-            },
-          );
-
-          const buildMonthlySourceData = (transactions, transactionType) => {
-            const sourceMap = {};
-            transactions.forEach((transaction) => {
-              if (transaction.type !== transactionType) return;
-              const monthIndex = new Date(transaction.date).getMonth();
-              const sourceName =
-                transaction.source || `General ${transactionType}`;
-              if (!sourceMap[sourceName]) {
-                sourceMap[sourceName] = Array(12).fill(0);
-              }
-              sourceMap[sourceName][monthIndex] += parseFloat(
-                transaction.amount || 0,
-              );
-            });
-            return {
-              labels: MONTH_NAMES,
-              datasets: Object.keys(sourceMap).map((sourceName) => ({
-                label: sourceName,
-                data: sourceMap[sourceName],
-              })),
-            };
-          };
-
-          const incomeBySource = buildMonthlySourceData(
-            yearlyTransactions,
-            "Income",
-          );
-          const expenseBySource = buildMonthlySourceData(
-            yearlyTransactions,
-            "Expense",
-          );
-          const savingsBySource = buildMonthlySourceData(
-            yearlyTransactions,
-            "Savings",
-          );
-
-          const totalIncome = monthlyIncome.reduce(
-            (sum, amount) => sum + amount,
-            0,
-          );
-          const totalExpense = monthlyExpense.reduce(
-            (sum, amount) => sum + amount,
-            0,
-          );
-          const totalSavings = monthlySavings.reduce(
-            (sum, amount) => sum + amount,
-            0,
-          );
-          const savingsRate = totalIncome
-            ? ((totalSavings / totalIncome) * 100).toFixed(1)
-            : 0;
-
-          let platformInsights = [];
-          if (yearlyTransactions.length < 20) {
-            platformInsights = [
-              "Limited transaction data across the platform this year.",
-              "Encourage users to log every income and expense for richer insights.",
-              "Top tip: Set up automatic savings transfers on payday.",
-            ];
-          } else {
-            const mostSpentCategory = Object.keys(categoryTotals).reduce(
-              (a, b) => (categoryTotals[a] > categoryTotals[b] ? a : b),
-              "Uncategorized",
-            );
-            platformInsights = [
-              savingsRate >= 20
-                ? `Platform-wide savings rate is strong at ${savingsRate}%.`
-                : `Platform savings rate is low (${savingsRate}%). Consider launching savings challenges.`,
-              `Most popular spending category: ${mostSpentCategory}`,
-              totalExpense > totalIncome * 0.9
-                ? "Platform is operating close to break-even. Monitor expenses closely."
-                : "Overall healthy income-expense balance across all users.",
-            ];
-          }
-
-          res.json({
-            incomeVsExpenseBarData: {
-              labels: MONTH_NAMES,
-              datasets: [
-                {
-                  label: "Income",
-                  data: monthlyIncome,
-                  backgroundColor: "#4CAF50",
-                },
-                {
-                  label: "Expense",
-                  data: monthlyExpense,
-                  backgroundColor: "#F44336",
-                },
-              ],
-            },
-            monthlyExpenseTrendLineData: {
-              labels: MONTH_NAMES,
-              datasets: [
-                {
-                  label: "Monthly Expenses",
-                  data: monthlyExpense,
-                  borderColor: "#FF6384",
-                },
-              ],
-            },
-            categorySpendingPieData: {
-              labels: Object.keys(categoryTotals),
-              datasets: [
-                {
-                  data: Object.values(categoryTotals),
-                  backgroundColor: CHART_COLOR_PALETTE,
-                },
-              ],
-            },
-            balanceTrendLineData: {
-              labels: MONTH_NAMES,
-              datasets: [
-                {
-                  label: "Balance Trend",
-                  data: monthlyBalanceTrend,
-                  borderColor: "#2196F3",
-                },
-              ],
-            },
-            savingsGrowthLineData: {
-              labels: MONTH_NAMES,
-              datasets: [
-                {
-                  label: "Savings Growth",
-                  data: monthlySavings,
-                  borderColor: "#4CAF50",
-                },
-              ],
-            },
-            incomeBySourceBarData: incomeBySource,
-            expensesBySourceBarData: expenseBySource,
-            savingsBySourceBarData: savingsBySource,
-            monthlyIncomeExpenseRatioLineData: {
-              labels: MONTH_NAMES,
-              datasets: [
-                {
-                  label: "Income/Expense Ratio",
-                  data: monthlyIncomeExpenseRatio,
-                  borderColor: "#FFCE56",
-                },
-              ],
-            },
-            financialSummaryData: {
-              monthlyNets: monthlyIncome.map(
-                (incomeAmount, monthIndex) =>
-                  incomeAmount -
-                  monthlyExpense[monthIndex] +
-                  monthlySavings[monthIndex],
-              ),
-              yearlyIncome: totalIncome,
-              yearlyExpense: totalExpense,
-              yearlySavings: totalSavings,
-              labels: MONTH_NAMES,
-            },
-            insights: platformInsights,
-            totalUsers: await userCollection.countDocuments({}),
-            totalTransactions: yearlyTransactions.length, 
-          });
-        } catch (err) {
-          console.error("Admin Analytics Error:", err);
-          res
-            .status(500)
-            .json({ error: "Failed to generate platform analytics" });
-        }
-      },
-    );
 
     app.post("/admin/tips", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
@@ -766,7 +511,10 @@ async function run() {
           createdAt: new Date(),
         };
         const result = await tipsCollection.insertOne(newTip);
-        res.status(201).json(result);
+        const created = await tipsCollection.findOne({
+          _id: result.insertedId,
+        });
+        res.status(201).json(created);
       } catch (err) {
         res.status(500).json({ error: "Failed to add financial tip" });
       }
@@ -781,11 +529,10 @@ async function run() {
     });
 
     app.put("/admin/tips/:id", verifyFBToken, verifyAdmin, async (req, res) => {
-      const result = await tipsCollection.updateOne(
-        { _id: new ObjectId(req.params.id) },
-        { $set: req.body },
-      );
-      res.json(result);
+      const id = new ObjectId(req.params.id);
+      await tipsCollection.updateOne({ _id: id }, { $set: req.body });
+      const updated = await tipsCollection.findOne({ _id: id });
+      res.json(updated);
     });
 
     app.delete(
@@ -800,14 +547,14 @@ async function run() {
       },
     );
 
-    app.get("/tips", async (req, res) => {
+    app.get("/tips", verifyFBToken, async (req, res) => {
       try {
         const tips = await tipsCollection
           .find({})
           .sort({ createdAt: -1 })
           .limit(8)
           .toArray();
-        res.json(tips);
+        res.send(tips);
       } catch (err) {
         res.status(500).json({ error: "Failed to fetch tips" });
       }
