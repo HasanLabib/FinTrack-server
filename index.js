@@ -18,7 +18,7 @@ app.use(
 app.use(express.json());
 
 app.use((req, res, next) => {
-  console.log("Incoming:", req.method, req.url);
+  //console.log("Incoming:", req.method, req.url);
   next();
 });
 
@@ -139,7 +139,7 @@ async function run() {
       async (req, res) => {
         try {
           const user = req.body;
-          console.log(user);
+          //console.log(user);
           if (!user) {
             return res.status(400).json({ message: "User Info Doesn't Exist" });
           }
@@ -164,7 +164,7 @@ async function run() {
           user.role = process.env.USER_ROLE || "user";
           user.createdAt = new Date();
           user.photo = req.file?.path;
-          console.log(user);
+          //console.log(user);
           const query = { email: user.email };
           const existingUser = await userCollection.findOne(query);
 
@@ -181,7 +181,7 @@ async function run() {
               .then(async (userRecord) => {
                 user.firebaseUID = userRecord.uid;
                 const result = await userCollection.insertOne(user);
-                console.log("Successfully created new user:", userRecord.uid);
+                //console.log("Successfully created new user:", userRecord.uid);
                 await auth.setCustomUserClaims(userRecord.uid, {
                   role: process.env.USER_ROLE,
                 });
@@ -286,7 +286,7 @@ async function run() {
             });
         }
       } catch (err) {
-        console.log(err);
+        //console.log(err);
         res.status(500).json({ message: "Internal Server Error" });
       }
     });
@@ -382,28 +382,56 @@ async function run() {
       },
     );
 
+ 
     app.get("/all-transaction", verifyFBToken, async (req, res) => {
       const page = parseInt(req.query.page) || 1;
       const limit = 8;
       const skip = (page - 1) * limit;
+
+      const {
+        search = "",
+        category = "",
+        type = "",
+        sortField = "createdAt",
+        sortOrder = "desc",
+      } = req.query;
+
+      const filter = {};
+
+      if (search) {
+        filter.$or = [
+          { source: { $regex: search, $options: "i" } },
+          { note: { $regex: search, $options: "i" } },
+          { createdByEmail: { $regex: search, $options: "i" } },
+          { category:      { $regex: search, $options: "i" } },
+        ];
+      }
+
+      if (category) filter.category = category;
+      if (type) filter.type = type;
+
+      const sort = {};
+      sort[sortField] = sortOrder === "asc" ? 1 : -1;
+
       try {
-        const transaction = await transactionCollection
-          .find({})
-          .sort({ createdAt: -1 })
+        const transactions = await transactionCollection
+          .find(filter)
+          .sort(sort)
           .skip(skip)
           .limit(limit)
           .toArray();
-        const totalTran = await transactionCollection.countDocuments({});
+
+        const totalTran = await transactionCollection.countDocuments(filter);
 
         res.status(200).send({
-          transaction,
+          transactions, // consistent key name with user endpoint
           totalTran,
           currentPage: page,
           totalPages: Math.ceil(totalTran / limit),
         });
       } catch (err) {
-        console.log(err);
-        res.status(500).send({ error: "Failed to fetch Transaction entries" });
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch transaction entries" });
       }
     });
     //--------Admin Dashboard Api End--------------
@@ -463,7 +491,7 @@ async function run() {
       const result = await incomeCollection.updateOne(query, {
         $set: { amount, updatedAt },
       });
-      console.log(result);
+      //console.log(result);
       res.send(result);
     });
 
@@ -483,17 +511,21 @@ async function run() {
         const totalIncomeSource = await incomeCollection.countDocuments({
           createdByEmail: req.decoded_email,
         });
-        const totalIncomeCalculate = await incomeCollection.aggregate([
-          {
-            $match: {
-              createdByEmail: req.decoded_email,
+        const totalIncomeCalculate = await incomeCollection
+          .aggregate([
+            {
+              $match: {
+                createdByEmail: req.decoded_email,
+              },
             },
-            $group: {
-              _id: null,
-              total: { $sum: `$amount` },
+            {
+              $group: {
+                _id: null,
+                total: { $sum: `$amount` },
+              },
             },
-          },
-        ]);
+          ])
+          .toArray();
         const totalIncome = totalIncomeCalculate[0]?.total || 0;
 
         res.send({
@@ -501,7 +533,7 @@ async function run() {
           totalIncome,
           totalIncomeSource,
           currentPage: page,
-          totalPages: Math.ceil(totalIncome / limit),
+          totalPages: Math.ceil(totalIncomeSource / limit),
         });
       } catch (err) {
         console.error(err);
@@ -512,12 +544,83 @@ async function run() {
     app.delete("/delete-income/:id", verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
+        const query = {
+          _id: new ObjectId(id),
+          createdByEmail: req.decoded_email,
+        };
         const result = await incomeCollection.deleteOne(query);
         res.status(200).json(result);
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to delete income entry" });
+      }
+    });
+
+    app.get("/income-track", verifyFBToken, async (req, res) => {
+      const filterYear = req.query.year || new Date().getFullYear();
+
+      try {
+        const incomeStateTrack = await transactionCollection
+          .aggregate([
+            {
+              $match: {
+                createdByEmail: req.decoded_email,
+                type: "Income",
+                date: {
+                  $gte: new Date(`${filterYear}-01-01`),
+                  $lte: new Date(`${filterYear}-12-31`),
+                },
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  month: { $month: { $toDate: "$date" } },
+                  source: "$source",
+                },
+                sourceAmount: { $sum: "$amount" },
+              },
+            },
+            { $sort: { "_id.month": 1 } },
+          ])
+          .toArray();
+        const monthNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+
+        const monthlyIncomeData = {};
+
+        incomeStateTrack.forEach((item) => {
+          const monthId = item._id.month;
+          if (!monthlyIncomeData[monthId]) {
+            monthlyIncomeData[monthId] = {
+              monthId: monthId,
+              month: monthNames[monthId - 1],
+              totalMonthlyIncome: 0,
+              sources: [],
+            };
+          }
+          monthlyIncomeData[monthId].totalMonthlyIncome += item.sourceAmount;
+          monthlyIncomeData[monthId].sources.push({
+            sourceName: item._id.source,
+            amount: item.sourceAmount,
+          });
+        });
+        //console.log(monthlyIncomeData);
+        res.status(200).send(Object.values(monthlyIncomeData));
+      } catch (err) {
+        res.status(500).send({ message: "Failed to track Income" });
       }
     });
 
@@ -604,12 +707,28 @@ async function run() {
       }
     });
 
+    app.get("/recent-transactions", verifyFBToken, async (req, res) => {
+      try {
+        const query = { createdByEmail: req.decoded_email };
+        const recentTransactions = await transactionCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .toArray();
+
+        res.status(200).send(recentTransactions);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch recent transactions" });
+      }
+    });
+
     app.put("/update-transaction/:id", verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
         const email = req.decoded_email;
         const updateTransaction = { ...req.body };
-        console.log(updateTransaction);
+        //console.log(updateTransaction);
         delete updateTransaction.createdByEmail;
 
         const query = { _id: new ObjectId(id), createdByEmail: email };
@@ -637,72 +756,6 @@ async function run() {
       }
     });
 
-    app.get("/income-track", verifyFBToken, async (req, res) => {
-      const filterYear = req.query.year || new Date().getFullYear();
-
-      try {
-        const incomeStateTrack = await transactionCollection
-          .aggregate([
-            {
-              $match: {
-                createdByEmail: req.decoded_email,
-                type: "Income",
-                date: {
-                  $gte: `${filterYear}-01-01`,
-                  $lte: `${filterYear}-12-31`,
-                },
-              },
-            },
-            {
-              $group: {
-                _id: {
-                  month: { $month: { $toDate: "$date" } },
-                  source: "$source",
-                },
-                sourceAmount: { $sum: "$amount" },
-              },
-            },
-            { $sort: { "_id.month": 1 } },
-          ])
-          .toArray();
-        const monthNames = [
-          "Jan",
-          "Feb",
-          "Mar",
-          "Apr",
-          "May",
-          "Jun",
-          "Jul",
-          "Aug",
-          "Sep",
-          "Oct",
-          "Nov",
-          "Dec",
-        ];
-
-        const monthlyIncomeData = {};
-
-        incomeStateTrack.forEach((item) => {
-          const monthId = item._id.month;
-          if (!monthlyIncomeData[monthId]) {
-            monthlyIncomeData[monthId] = {
-              monthId: monthId,
-              month: monthNames[monthId - 1],
-              totalMonthlyIncome: 0,
-              sources: [],
-            };
-          }
-          monthlyIncomeData[monthId].totalMonthlyIncome += item.sourceAmount;
-          monthlyIncomeData[monthId].sources.push({
-            sourceName: item._id.source,
-            amount: item.sourceAmount,
-          });
-        });
-        res.status(200).send(Object.values(monthlyIncomeData));
-      } catch (err) {
-        res.status(500).send({ message: "Failed to track Income" });
-      }
-    });
     //--------------Expense Api-------------
     app.post("/expense", verifyFBToken, async (req, res) => {
       try {
@@ -747,7 +800,7 @@ async function run() {
           $set: { amount, updatedAt },
         });
 
-        console.log(result);
+        //console.log(result);
         res.send(result);
       } catch (err) {
         console.error(err);
@@ -822,8 +875,8 @@ async function run() {
                 createdByEmail: email,
                 type: "Expense",
                 date: {
-                  $gte: `${filterYear}-01-01`,
-                  $lte: `${filterYear}-12-31`,
+                  $gte: new Date(`${filterYear}-01-01`),
+                  $lte: new Date(`${filterYear}-12-31`),
                 },
               },
             },
@@ -873,6 +926,7 @@ async function run() {
             amount: item.sourceAmount,
           });
         });
+        //console.log(monthlyExpenseData);
 
         res.status(200).send(Object.values(monthlyExpenseData));
       } catch (err) {
@@ -944,7 +998,7 @@ async function run() {
         delete updateSaving.createdByEmail; // Prevent overwriting ownership
 
         const query = { _id: new ObjectId(id) };
-        const result = await savingsCollection.updateOne(query, {
+        const result = await savingCollection.updateOne(query, {
           $set: updateSaving,
         });
 
@@ -960,52 +1014,55 @@ async function run() {
       const { id, amount, updatedAt } = req.body;
 
       const query = { createdByEmail, _id: new ObjectId(id) };
-      const result = await savingsCollection.updateOne(query, {
+      const result = await savingCollection.updateOne(query, {
         $set: { amount, updatedAt },
       });
 
-      console.log(result);
+      //console.log(result);
       res.send(result);
     });
     app.delete("/delete-saving/:id", verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
-        const result = await savingsCollection.deleteOne(query);
+        const result = await savingCollection.deleteOne(query);
         res.status(200).json(result);
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to delete savings entry" });
       }
     });
+
     app.get("/savings-track/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
+      const targetId = req.params.id;
       const filterYear = req.query.year || new Date().getFullYear();
+
       try {
-        const currentPogress = await transactionCollection
+        const savingsTrack = await transactionCollection
           .aggregate([
             {
               $match: {
-                targetId: id,
+                targetID: targetId,
+                createdByEmail: req.decoded_email,
                 type: "Savings",
                 date: {
-                  $gte: `${filterYear}-01-01`,
-                  $lte: `${filterYear}-12-31`,
+                  $gte: new Date(`${filterYear}-01-01`),
+                  $lte: new Date(`${filterYear}-12-31`),
                 },
               },
             },
             {
               $group: {
-                _id: { $month: { $toDate: `$date` } },
-                monthlyContribution: { $sum: `$amount` },
+                _id: {
+                  month: { $month: { $toDate: "$date" } },
+                  note: "$note",
+                },
+                contributionAmount: { $sum: "$amount" },
               },
             },
-            {
-              $sort: { _id: 1 },
-            },
+            { $sort: { "_id.month": 1 } },
           ])
           .toArray();
-
         const monthNames = [
           "Jan",
           "Feb",
@@ -1020,14 +1077,29 @@ async function run() {
           "Nov",
           "Dec",
         ];
-        const formattedCurrentProgress = currentPogress.map((item) => ({
-          monthId: item._id,
-          month: monthNames[item._id - 1],
-          amount: item.monthlyTotal,
-        }));
-        res.status(200).send(formattedCurrentProgress);
+        const monthlySavings = {};
+
+        savingsTrack.forEach((item) => {
+          const monthId = item._id.month;
+
+          if (!monthlySavings[monthId]) {
+            monthlySavings[monthId] = {
+              monthId: monthId,
+              month: monthNames[monthId - 1],
+              totalMonthlySavings: 0,
+              contributions: [],
+            };
+          }
+          monthlySavings[monthId].totalMonthlySavings +=
+            item.contributionAmount;
+          monthlySavings[monthId].contributions.push({
+            description: item._id.note || "Saving Deposit",
+            amount: item.contributionAmount,
+          });
+        });
+        res.status(200).send(Object.values(monthlySavings));
       } catch (error) {
-        res.status(500).send(error);
+        res.status(500).send({ message: "Failed to track savings progress" });
       }
     });
 
