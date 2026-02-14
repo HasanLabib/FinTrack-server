@@ -11,7 +11,7 @@ const port = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: "https://fin-track-client-xi.vercel.app",
     credentials: true,
   }),
 );
@@ -80,7 +80,7 @@ const uploadProfile = multer({ storage: photoStorage });
 const upload = multer();
 const cookieOption = {
   httpOnly: true,
-  secure: false,
+  secure: true,
   sameSite: "lax",
   maxAge: 2592000,
 };
@@ -382,7 +382,6 @@ async function run() {
       },
     );
 
- 
     app.get("/all-transaction", verifyFBToken, async (req, res) => {
       const page = parseInt(req.query.page) || 1;
       const limit = 8;
@@ -403,7 +402,7 @@ async function run() {
           { source: { $regex: search, $options: "i" } },
           { note: { $regex: search, $options: "i" } },
           { createdByEmail: { $regex: search, $options: "i" } },
-          { category:      { $regex: search, $options: "i" } },
+          { category: { $regex: search, $options: "i" } },
         ];
       }
 
